@@ -5,20 +5,102 @@ import {
 } from './lexicon/types/com/atproto/sync/subscribeRepos'
 import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
 
-const SKA_PATTERNS = [
-  /\bska\b/i,
+// TODO: Make this the most advanced skalgorithm on the planet
+// Future ideas:
+// - ML-based ska detection (train on ska lyrics/discussions)
+// - Image recognition for checkerboard patterns, ska band shirts
+// - Audio analysis for upstrokes and horn sections
+// - Ska artist social graph analysis
+// - Regional ska scene detection
+// - Ska subgenre classification (traditional, 2-tone, third wave, ska-punk, etc.)
+
+// High-confidence patterns - always match
+const HIGH_CONFIDENCE_PATTERNS = [
   /\bska[-\s]?punk\b/i,
-  /\b2[-\s]?tone\b/i,
-  /\btwo[-\s]?tone\b/i,
-  /\brock[-\s]?steady\b/i,
-  /\brude[-\s]?(boy|girl)\b/i,
-  /\bskank(ing)?\b/i,
-  /\bthird[-\s]?wave\s+ska\b/i,
   /\bska[-\s]?core\b/i,
+  /\bthird[-\s]?wave\s+ska\b/i,
+  /\brock[-\s]?steady\b/i,
+  /\bskankin[g']?\b/i,
+  /\brudeboy\b/i,
+  /\brudegirl\b/i,
+  /\b(2|two)[-\s]?tone\s+ska\b/i,
+  /#ska\b/i,
+  // Notable ska bands
+  /\b(the\s+)?specials\b/i,
+  /\b(the\s+)?selecter\b/i,
+  /\b(the\s+)?skatalites\b/i,
+  /\bmadness\b/i,
+  /\boperation\s+ivy\b/i,
+  /\bless\s+than\s+jake\b/i,
+  /\bstreetlight\s+manifesto\b/i,
+  /\breel\s+big\s+fish\b/i,
+  /\bmighty\s+mighty\s+bosstones\b/i,
+  /\bsave\s+ferris\b/i,
+  /\bgoldfinger\b/i,
+  /\btoots\s+(and|&)\s+(the\s+)?maytals\b/i,
+  /\bdesmond\s+dekker\b/i,
+  /\bbad\s+manners\b/i,
+  /\bthe\s+beat\b.*\bska\b/i,
+]
+
+// Music context words that validate ambiguous terms
+const MUSIC_CONTEXT = /\b(band|bands|music|song|songs|album|albums|track|tracks|record|records|vinyl|playlist|listen|listening|heard|concert|concerts|show|shows|gig|gigs|tour|touring|live|genre|sound|sounds|horns|brass|trumpet|trombone|saxophone|upstroke|offbeat)\b/i
+
+// Swedish "ska" patterns to exclude (ska + common Swedish verb infinitives)
+const SWEDISH_SKA_PATTERNS = [
+  /\bska\s+(vara|göra|ha|bli|ta|komma|se|få|kunna|vilja|gå|säga|veta|tro|börja|sluta|försöka|behöva|finnas|heta|verka|känna|leva|dö|äta|dricka|sova|jobba|arbeta|spela|läsa|skriva|köpa|sälja|hjälpa|hända|prata|titta|lyssna|träffa|möta|visa|ge|hålla|stå|sitta|ligga|springa|flyga|köra|resa|bo|flytta)\b/i,
+  /\b(jag|du|han|hon|vi|de|den|det|man|ni)\s+ska\b/i,
+  /\bska\s+(vi|du|jag|ni|han|hon|de|man)\b/i,
+  /\bdet\s+ska\b/i,
+  /\bsom\s+ska\b/i,
+  /\batt\s+ska\b/i,
+  /\boch\s+ska\b/i,
+]
+
+// Other non-music "ska" patterns
+const EXCLUDE_PATTERNS = [
+  /\bpolska\b/i,  // Polish dance or "Polish" in Swedish
 ]
 
 function isSkaRelated(text: string): boolean {
-  return SKA_PATTERNS.some((pattern) => pattern.test(text))
+  // Check high-confidence patterns first
+  if (HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(text))) {
+    return true
+  }
+
+  // Check for excluded patterns
+  if (EXCLUDE_PATTERNS.some((p) => p.test(text))) {
+    return false
+  }
+
+  const hasStandaloneSka = /\bska\b/i.test(text)
+  const hasTwoTone = /\b(2|two)[-\s]?tone\b/i.test(text)
+  const hasRudeBoyGirl = /\brude[-\s]?(boy|girl)\b/i.test(text)
+
+  // For standalone "ska", check it's not Swedish
+  if (hasStandaloneSka) {
+    const isSwedish = SWEDISH_SKA_PATTERNS.some((p) => p.test(text))
+    if (isSwedish) {
+      return false
+    }
+    // Standalone ska with music context
+    if (MUSIC_CONTEXT.test(text)) {
+      return true
+    }
+  }
+
+  // "two tone" or "rude boy/girl" need music context (could be fashion/style otherwise)
+  if ((hasTwoTone || hasRudeBoyGirl) && MUSIC_CONTEXT.test(text)) {
+    return true
+  }
+
+  // Standalone ska without Swedish patterns - allow if it looks like ska is the focus
+  // e.g., "love ska", "ska forever", "ska is great"
+  if (hasStandaloneSka && /\b(love|loving|into|obsessed|favorite|favourite|best|great|awesome)\s+(ska|this)\b/i.test(text)) {
+    return true
+  }
+
+  return false
 }
 
 export class FirehoseSubscription extends FirehoseSubscriptionBase {
