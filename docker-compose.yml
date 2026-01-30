@@ -1,0 +1,33 @@
+services:
+  blueska:
+    build: .
+    restart: unless-stopped
+    environment:
+      - FEEDGEN_PORT=3000
+      - FEEDGEN_LISTENHOST=0.0.0.0
+      - FEEDGEN_HOSTNAME=${FEEDGEN_HOSTNAME}
+      - FEEDGEN_PUBLISHER_DID=${FEEDGEN_PUBLISHER_DID}
+      - FEEDGEN_SQLITE_LOCATION=/data/blueska.db
+      - FEEDGEN_SUBSCRIPTION_ENDPOINT=wss://bsky.network
+    volumes:
+      - blueska-data:/data
+    expose:
+      - "3000"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy-data:/data
+      - caddy-config:/config
+    depends_on:
+      - blueska
+
+volumes:
+  blueska-data:
+  caddy-data:
+  caddy-config:

@@ -1,0 +1,3 @@
+{$FEEDGEN_HOSTNAME} {
+	reverse_proxy blueska:3000
+}
