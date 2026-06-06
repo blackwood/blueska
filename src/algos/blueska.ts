@@ -5,85 +5,75 @@ import { AppContext } from '../config'
 export const shortname = 'blueska'
 
 export const handler = async (ctx: AppContext, params: QueryParams) => {
-  const limit = params.limit
+  const limit = params.limit ?? 50
   const now = new Date()
   const freshWindow = new Date(now.getTime() - 48 * 60 * 60 * 1000).toISOString()
 
-  // Parse cursor: "freshOffset:popularOffset"
-  let freshOffset = 0
-  let popularOffset = 0
-  if (params.cursor) {
-    const [f, p] = params.cursor.split(':')
-    freshOffset = parseInt(f, 10) || 0
-    popularOffset = parseInt(p, 10) || 0
-  }
+  // Cursor is a page number (0-indexed)
+  const page = params.cursor ? parseInt(params.cursor, 10) || 0 : 0
 
-  // Fetch fresh posts (last 48 hours)
-  const freshPosts = await ctx.db
+  // Fetch enough candidates to cover this page, capped to avoid huge scans
+  const scanDepth = Math.min((page + 1) * limit * 5, 1000)
+
+  const candidates = await ctx.db
     .selectFrom('post')
     .selectAll()
-    .where('indexedAt', '>', freshWindow)
+    .where((eb) =>
+      eb.or([eb('indexedAt', '>', freshWindow), eb('likeCount', '>', 0)]),
+    )
     .orderBy('indexedAt', 'desc')
-    .offset(freshOffset)
-    .limit(limit * 2)
+    .limit(scanDepth)
     .execute()
 
-  // Fetch popular posts (by like count)
-  const popularPosts = await ctx.db
-    .selectFrom('post')
-    .selectAll()
-    .where('likeCount', '>', 0)
-    .orderBy('likeCount', 'desc')
-    .orderBy('indexedAt', 'desc')
-    .offset(popularOffset)
-    .limit(limit)
-    .execute()
-
-  // Interleave: 3 fresh, 1 popular, repeat
-  const seen = new Set<string>()
-  const feed: { post: string }[] = []
-  let freshIdx = 0
-  let popularIdx = 0
-
-  while (feed.length < limit) {
-    // Add up to 3 fresh posts
-    for (let i = 0; i < 3 && feed.length < limit; i++) {
-      while (freshIdx < freshPosts.length && seen.has(freshPosts[freshIdx].uri)) {
-        freshIdx++
-      }
-      if (freshIdx < freshPosts.length) {
-        seen.add(freshPosts[freshIdx].uri)
-        feed.push({ post: freshPosts[freshIdx].uri })
-        freshIdx++
-      }
-    }
-
-    // Add 1 popular post
-    if (feed.length < limit) {
-      while (popularIdx < popularPosts.length && seen.has(popularPosts[popularIdx].uri)) {
-        popularIdx++
-      }
-      if (popularIdx < popularPosts.length) {
-        seen.add(popularPosts[popularIdx].uri)
-        feed.push({ post: popularPosts[popularIdx].uri })
-        popularIdx++
-      }
-    }
-
-    // If we've exhausted both lists, break
-    if (freshIdx >= freshPosts.length && popularIdx >= popularPosts.length) {
-      break
+  // Batch-fetch author scores for the candidate set
+  const authorDids = [
+    ...new Set(candidates.map((p) => p.authorDid).filter(Boolean)),
+  ]
+  const authorScoreMap = new Map<string, number>()
+  if (authorDids.length > 0) {
+    const scores = await ctx.db
+      .selectFrom('author_score')
+      .select(['did', 'score'])
+      .where('did', 'in', authorDids)
+      .execute()
+    for (const s of scores) {
+      authorScoreMap.set(s.did, s.score)
     }
   }
 
-  // Build cursor for next page
-  let cursor: string | undefined
-  if (feed.length > 0) {
-    cursor = `${freshOffset + freshIdx}:${popularOffset + popularIdx}`
-  }
+  // Composite relevance score.
+  // Weights are provisional — run /health or check retention logs to see actual
+  // component distributions before trusting these numbers. A component with low
+  // variance across candidates contributes far less than its nominal weight suggests.
+  //
+  // authorScene: bimodal/sparse (0 if scene graph not built yet — run crawlSceneGraph)
+  // freshness:   0–1 exp decay over 48h
+  // engagement:  log-normalised likeCount, 0–1
+  // lexiconScore: 0–1 exp curve, see src/util/lexiconScore.ts — re-ranker only
+  const WEIGHTS = { author: 0.40, freshness: 0.30, engagement: 0.20, lexicon: 0.10 }
 
-  return {
-    cursor,
-    feed,
-  }
+  const scored = candidates.map((post) => {
+    const ageMs = now.getTime() - new Date(post.indexedAt).getTime()
+    const freshness = Math.exp(-ageMs / (48 * 60 * 60 * 1000))
+    const engagement = Math.min(1, Math.log1p(post.likeCount) / Math.log(10))
+    const authorScene = authorScoreMap.get(post.authorDid) ?? 0
+    const lexicon = post.lexiconScore ?? 0
+    const score =
+      WEIGHTS.author * authorScene +
+      WEIGHTS.freshness * freshness +
+      WEIGHTS.engagement * engagement +
+      WEIGHTS.lexicon * lexicon
+    return { post: post.uri, score }
+  })
+
+  scored.sort((a, b) => b.score - a.score)
+
+  const startIdx = page * limit
+  const feed = scored.slice(startIdx, startIdx + limit).map(({ post }) => ({
+    post,
+  }))
+
+  const cursor = feed.length >= limit ? String(page + 1) : undefined
+
+  return { cursor, feed }
 }

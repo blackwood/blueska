@@ -1,0 +1,21 @@
+{
+  "_todo": "TODO: write scripts/analyzeExamples.ts — for each URI fetch post text via Bluesky API, run computeLexiconScore + isSkaRelated, print score distribution by category. Goal: verify lexicon vocabulary separates categories (gig/listener/promo vs. negatives) before tuning weights or K in lexiconScore.ts. Same labeled set becomes training data if/when swapping to centroid embeddings (same score(text):number interface).",
+  "version": 1,
+  "positive": {
+    "gig": [],
+    "listener": [],
+    "promo": [],
+    "media": [],
+    "humor": [
+      "at://did:plc:bxmkvg2zs7zwfserdztze76m/app.bsky.feed.post/3mnndv2uefs2v"
+    ]
+  },
+  "negative": {
+    "swedish": [],
+    "crypto": [],
+    "geography": [],
+    "unrelated": [
+      "at://did:plc:josbhgmdah7asnx3vuxeq2wd/app.bsky.feed.post/3mnndlp5l6e2c"
+    ]
+  }
+}

@@ -16,8 +16,8 @@ RUN yarn build
 # Production image
 FROM node:18-alpine
 
-# Install runtime dependencies for better-sqlite3
-RUN apk add --no-cache libstdc++
+# Install runtime dependencies for better-sqlite3 + sqlite3 CLI for ops
+RUN apk add --no-cache libstdc++ sqlite
 
 WORKDIR /app
 

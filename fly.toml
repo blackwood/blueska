@@ -1,0 +1,44 @@
+# fly.toml app configuration file generated for blueska on 2026-06-04T23:34:46-04:00
+#
+# See https://fly.io/docs/reference/configuration/ for information about how to use this file.
+#
+
+app = 'blueska'
+primary_region = 'iad'
+
+[build]
+  dockerfile = 'Dockerfile'
+
+[deploy]
+  wait_timeout = "5m"
+
+[env]
+  FEEDGEN_HOSTNAME = 'blueska.fly.dev'
+  FEEDGEN_LISTENHOST = '0.0.0.0'
+  FEEDGEN_PORT = '3000'
+  FEEDGEN_SQLITE_LOCATION = '/data/blueska.db'
+  FEEDGEN_SUBSCRIPTION_ENDPOINT = 'wss://jetstream2.us-east.bsky.network/subscribe?wantedCollections=app.bsky.feed.post&wantedCollections=app.bsky.feed.like'
+
+[[mounts]]
+  source = 'blueska_data'
+  destination = '/data'
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = 'off'
+  auto_start_machines = true
+  min_machines_running = 1
+
+  [[http_service.checks]]
+    grace_period = "10s"
+    interval = "15s"
+    method = "GET"
+    path = "/.well-known/did.json"
+    timeout = "5s"
+
+[[vm]]
+  memory = '1gb'
+  cpu_kind = 'shared'
+  cpus = 1
+  memory_mb = 1024

@@ -1,20 +1,11 @@
 import { sql } from 'kysely'
+import { JetstreamSubscriptionBase, JetstreamEvent } from './util/jetstream'
 import {
-  OutputSchema as RepoEvent,
-  isCommit,
-} from './lexicon/types/com/atproto/sync/subscribeRepos'
-import { FirehoseSubscriptionBase, getOpsByType } from './util/subscription'
+  computeLexiconScore,
+  LEXICON_SCORE_VERSION,
+} from './util/lexiconScore'
 
-// TODO: Make this the most advanced skalgorithm on the planet
-// Future ideas:
-// - ML-based ska detection (train on ska lyrics/discussions)
-// - Image recognition for checkerboard patterns, ska band shirts
-// - Audio analysis for upstrokes and horn sections
-// - Ska artist social graph analysis
-// - Regional ska scene detection
-// - Ska subgenre classification (traditional, 2-tone, third wave, ska-punk, etc.)
-
-// High-confidence patterns - always match
+// High-confidence patterns — always match, no context needed
 const HIGH_CONFIDENCE_PATTERNS = [
   /\bska[-\s]?punk\b/i,
   /\bska[-\s]?core\b/i,
@@ -25,50 +16,68 @@ const HIGH_CONFIDENCE_PATTERNS = [
   /\brudegirl\b/i,
   /\b(2|two)[-\s]?tone\s+ska\b/i,
   /#ska\b/i,
-  // Notable ska bands
-  /\b(the\s+)?specials\b/i,
-  /\b(the\s+)?selecter\b/i,
+  // Unambiguous band/artist names (specific enough to not need context)
   /\b(the\s+)?skatalites\b/i,
-  /\bmadness\b/i,
   /\boperation\s+ivy\b/i,
   /\bless\s+than\s+jake\b/i,
   /\bstreetlight\s+manifesto\b/i,
   /\breel\s+big\s+fish\b/i,
   /\bmighty\s+mighty\s+bosstones\b/i,
-  /\bsave\s+ferris\b/i,
-  /\bgoldfinger\b/i,
   /\btoots\s+(and|&)\s+(the\s+)?maytals\b/i,
   /\bdesmond\s+dekker\b/i,
-  /\bbad\s+manners\b/i,
   /\bthe\s+beat\b.*\bska\b/i,
 ]
 
-// Music context words that validate ambiguous terms
-const MUSIC_CONTEXT = /\b(band|bands|music|song|songs|album|albums|track|tracks|record|records|vinyl|playlist|listen|listening|heard|concert|concerts|show|shows|gig|gigs|tour|touring|live|genre|sound|sounds|horns|brass|trumpet|trombone|saxophone|upstroke|offbeat)\b/i
-
-// Swedish "ska" patterns to exclude (ska + common Swedish verb infinitives)
-const SWEDISH_SKA_PATTERNS = [
-  /\bska\s+(vara|göra|ha|bli|ta|komma|se|få|kunna|vilja|gå|säga|veta|tro|börja|sluta|försöka|behöva|finnas|heta|verka|känna|leva|dö|äta|dricka|sova|jobba|arbeta|spela|läsa|skriva|köpa|sälja|hjälpa|hända|prata|titta|lyssna|träffa|möta|visa|ge|hålla|stå|sitta|ligga|springa|flyga|köra|resa|bo|flytta)\b/i,
-  /\b(jag|du|han|hon|vi|de|den|det|man|ni)\s+ska\b/i,
-  /\bska\s+(vi|du|jag|ni|han|hon|de|man)\b/i,
-  /\bdet\s+ska\b/i,
-  /\bsom\s+ska\b/i,
-  /\batt\s+ska\b/i,
-  /\boch\s+ska\b/i,
+// Band names that are also common words — require music context to match.
+// Case-sensitive where the band name is a proper noun (capital) but the
+// common word almost always appears lowercase.
+const AMBIGUOUS_BAND_PATTERNS = [
+  /\bthe\s+specials\b/i,
+  /\b(the\s+)?selecter\b/i,
+  /\bMadness\b/,              // case-sensitive: lowercase "madness" = common word
+  /\bsave\s+ferris\b/i,
+  /\bgoldfinger\b/i,
+  /\bBad\s+Manners\b/,        // case-sensitive: lowercase "bad manners" = common phrase
 ]
 
-// Other non-music "ska" patterns
+// Music context words that validate ambiguous terms
+const MUSIC_CONTEXT =
+  /\b(band|bands|music|song|songs|album|albums|track|tracks|record|records|vinyl|playlist|listen|listening|heard|concert|concerts|show|shows|gig|gigs|tour|touring|live|genre|sound|sounds|horns|brass|trumpet|trombone|saxophone|upstroke|offbeat)\b/i
+
+// English music loanwords that appear even in non-English ska posts
+const ENGLISH_MUSIC_SIGNALS =
+  /\b(gig|gigs|show|shows|band|bands|concert|live|vinyl|ep|lp|bandcamp|spotify|soundcloud|tour|touring|skanking|skank|setlist|encore|venue|merch|lineup|festival|soundcheck|rehearsal|jam|riff)\b/i
+
+// Swedish/Norwegian "ska" as modal verb: detected via surrounding grammar
+const NORDIC_SKA_PATTERNS = [
+  // Swedish subject + ska (jag/du/han/hon/vi/de/ni + ska)
+  /\b(jag|du|han|hon|vi|de|den|det|man|ni)\s+ska\b/i,
+  // ska + Swedish/Norse modal infinitives
+  /\bska\s+(vara|göra|ha|bli|ta|komma|se|få|kunna|vilja|gå|säga|veta|tro|börja|sluta|försöka|behöva|finnas|heta|verka|känna|leva|dö|äta|dricka|sova|jobba|arbeta|spela|läsa|skriva|köpa|sälja|hjälpa|hända|prata|titta|lyssna|träffa|möta|visa|ge|hålla|stå|sitta|ligga|springa|flyga|köra|resa|bo|flytta)\b/i,
+  // inverted: ska du/vi/jag
+  /\bska\s+(vi|du|jag|ni|han|hon|de|man)\b/i,
+  // common Norwegian modal: skal + infinitive marker
+  /\bskal\s+(du|vi|jeg|dere|han|hun|de|man)\b/i,
+  /\b(jeg|du|han|hun|vi|de|dere|man)\s+skal\b/i,
+  // Swedish connectives tightly coupling ska
+  /\b(det|som|att|och)\s+ska\b/i,
+]
+
+// Substring exclusions (word-boundary-agnostic fragments already filtered above)
 const EXCLUDE_PATTERNS = [
-  /\bpolska\b/i,  // Polish dance or "Polish" in Swedish
+  /\bpolska\b/i, // Polish dance / "Polish" in Swedish
+  /\$ska\b/i, // crypto token
+  /\bska\s+(coin|token|crypto|airdrop)\b/i,
+  /\b(alaska|nebraska|itasca)\b/i,
 ]
 
 function isSkaRelated(text: string): boolean {
-  // Check high-confidence patterns first
+  // High-confidence: always pass
   if (HIGH_CONFIDENCE_PATTERNS.some((p) => p.test(text))) {
     return true
   }
 
-  // Check for excluded patterns
+  // Hard exclusions
   if (EXCLUDE_PATTERNS.some((p) => p.test(text))) {
     return false
   }
@@ -77,78 +86,101 @@ function isSkaRelated(text: string): boolean {
   const hasTwoTone = /\b(2|two)[-\s]?tone\b/i.test(text)
   const hasRudeBoyGirl = /\brude[-\s]?(boy|girl)\b/i.test(text)
 
-  // For standalone "ska", check it's not Swedish
-  if (hasStandaloneSka) {
-    const isSwedish = SWEDISH_SKA_PATTERNS.some((p) => p.test(text))
-    if (isSwedish) {
-      return false
-    }
-    // Standalone ska with music context
-    if (MUSIC_CONTEXT.test(text)) {
+  // Ambiguous band names require music context
+  if (AMBIGUOUS_BAND_PATTERNS.some((p) => p.test(text))) {
+    if (MUSIC_CONTEXT.test(text) || ENGLISH_MUSIC_SIGNALS.test(text)) {
       return true
     }
   }
 
-  // "two tone" or "rude boy/girl" need music context (could be fashion/style otherwise)
-  if ((hasTwoTone || hasRudeBoyGirl) && MUSIC_CONTEXT.test(text)) {
-    return true
+  if (hasStandaloneSka) {
+    // Filter out Nordic grammar patterns
+    if (NORDIC_SKA_PATTERNS.some((p) => p.test(text))) {
+      // Only rescue if there are English music signals (bilingual ska posts)
+      return ENGLISH_MUSIC_SIGNALS.test(text)
+    }
+    // Non-Nordic standalone ska → require at least music context or music signal
+    return MUSIC_CONTEXT.test(text) || ENGLISH_MUSIC_SIGNALS.test(text)
   }
 
-  // Standalone ska without Swedish patterns - allow if it looks like ska is the focus
-  // e.g., "love ska", "ska forever", "ska is great"
-  if (hasStandaloneSka && /\b(love|loving|into|obsessed|favorite|favourite|best|great|awesome)\s+(ska|this)\b/i.test(text)) {
+  if ((hasTwoTone || hasRudeBoyGirl) && MUSIC_CONTEXT.test(text)) {
     return true
   }
 
   return false
 }
 
-export class FirehoseSubscription extends FirehoseSubscriptionBase {
-  async handleEvent(evt: RepoEvent) {
-    if (!isCommit(evt)) return
-
-    const ops = await getOpsByType(evt)
-
-    const postsToDelete = ops.posts.deletes.map((del) => del.uri)
-    const postsToCreate = ops.posts.creates
-      .filter((create) => isSkaRelated(create.record.text))
-      .map((create) => ({
-        uri: create.uri,
-        cid: create.cid,
-        indexedAt: new Date().toISOString(),
-        likeCount: 0,
-      }))
-
-    // Track likes on posts we've indexed
-    const likeSubjects = ops.likes.creates.map((like) => like.record.subject.uri)
-    if (likeSubjects.length > 0) {
-      await this.db
-        .updateTable('post')
-        .set({ likeCount: sql`likeCount + 1` })
-        .where('uri', 'in', likeSubjects)
-        .execute()
+export class FirehoseSubscription extends JetstreamSubscriptionBase {
+  async handleEvent(evt: JetstreamEvent) {
+    if (evt.kind !== 'commit' || !evt.commit) return
+    try {
+      await this.processEvent(evt)
+    } catch (err) {
+      console.error('firehose write error (dropping event):', err)
     }
+  }
 
-    // Decrement like counts for deleted likes
-    const unlikeSubjects = ops.likes.deletes.map((del) => {
-      // Extract the post URI from the like URI (likes reference their subject)
-      // Like URIs are at://<did>/app.bsky.feed.like/<rkey>, we need the subject
-      // Unfortunately we don't have the subject URI for deletes, so we skip this
-      return null
-    }).filter(Boolean)
+  private async processEvent(evt: JetstreamEvent) {
+    const { commit } = evt!
+    const uri = `at://${evt.did}/${commit!.collection}/${commit!.rkey}`
 
-    if (postsToDelete.length > 0) {
-      await this.db
-        .deleteFrom('post')
-        .where('uri', 'in', postsToDelete)
-        .execute()
-    }
-    if (postsToCreate.length > 0) {
-      await this.db
-        .insertInto('post')
-        .values(postsToCreate)
-        .onConflict((oc) => oc.doNothing())
-        .execute()
+    if (commit!.collection === 'app.bsky.feed.post') {
+      if (commit!.operation === 'delete') {
+        await this.db.deleteFrom('post').where('uri', '=', uri).execute()
+      } else if (commit!.operation === 'create' && commit!.record) {
+        const text = (commit!.record['text'] as string) ?? ''
+        if (isSkaRelated(text)) {
+          await this.db
+            .insertInto('post')
+            .values({
+              uri,
+              cid: commit!.cid ?? '',
+              authorDid: evt.did,
+              indexedAt: new Date().toISOString(),
+              likeCount: 0,
+              lexiconScore: computeLexiconScore(text),
+              scoreVersion: LEXICON_SCORE_VERSION,
+            })
+            .onConflict((oc) => oc.doNothing())
+            .execute()
+        }
+      }
+    } else if (commit!.collection === 'app.bsky.feed.like') {
+      if (commit!.operation === 'create' && commit!.record) {
+        const subject = commit!.record['subject'] as
+          | { uri?: string }
+          | undefined
+        const subjectUri = subject?.uri
+        if (subjectUri) {
+          // Only track likes on posts we've indexed — storing all firehose likes fills the DB
+          const updated = await this.db
+            .updateTable('post')
+            .set({ likeCount: sql`likeCount + 1` })
+            .where('uri', '=', subjectUri)
+            .executeTakeFirst()
+          if (Number(updated.numUpdatedRows) > 0) {
+            await this.db
+              .insertInto('like')
+              .values({ uri, subjectUri })
+              .onConflict((oc) => oc.doNothing())
+              .execute()
+          }
+        }
+      } else if (commit!.operation === 'delete') {
+        const likeRow = await this.db
+          .selectFrom('like')
+          .select('subjectUri')
+          .where('uri', '=', uri)
+          .executeTakeFirst()
+        if (likeRow) {
+          await this.db
+            .updateTable('post')
+            .set({ likeCount: sql`MAX(0, likeCount - 1)` })
+            .where('uri', '=', likeRow.subjectUri)
+            .execute()
+          await this.db.deleteFrom('like').where('uri', '=', uri).execute()
+        }
+      }
     }
   }
 }

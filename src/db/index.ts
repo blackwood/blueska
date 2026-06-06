@@ -4,10 +4,12 @@ import { DatabaseSchema } from './schema'
 import { migrationProvider } from './migrations'
 
 export const createDb = (location: string): Database => {
+  const sqlite = new SqliteDb(location)
+  // WAL mode: allows concurrent reads alongside the single writer, reduces lock contention
+  sqlite.pragma('journal_mode = WAL')
+  sqlite.pragma('busy_timeout = 5000')
   return new Kysely<DatabaseSchema>({
-    dialect: new SqliteDialect({
-      database: new SqliteDb(location),
-    }),
+    dialect: new SqliteDialect({ database: sqlite }),
   })
 }
 
