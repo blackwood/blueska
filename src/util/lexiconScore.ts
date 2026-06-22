@@ -18,7 +18,7 @@
 // scoreVersion exported here — increment when vocabulary changes so callers
 // can identify and recompute stale scores.
 
-export const LEXICON_SCORE_VERSION = 1
+export const LEXICON_SCORE_VERSION = 3
 
 const K = 1.5
 
@@ -27,16 +27,16 @@ const TIER1: [RegExp, number][] = [
   [/\bska[-\s]?punk\b/i, 0.9],
   [/\bska[-\s]?core\b/i, 0.9],
   [
-    /\bska[-\s]?(show|gig|concert|festival|tour|night|party|dance|bash|throwdown)\b/i,
+    /\bska[-\s]?(show|gig|concert|festival|tour|night|party|dance|bash|throwdown|cover|version|remix|arrangement)\b/i,
     0.9,
   ],
   [/\bthird[-\s]?wave\s+ska\b/i, 0.9],
-  [/\brock[-\s]?steady\b/i, 0.85],
   [/\bskankin[g']?\b/i, 1.0],
   [/\brudeboy\b/i, 0.9],
   [/\brudegirl\b/i, 0.9],
   [/\b(2|two)[-\s]?tone\s+ska\b/i, 0.9],
   [/#ska\b/i, 0.95],
+  [/#blueska\b/i, 0.95],
   [/\b(the\s+)?skatalites\b/i, 0.9],
   [/\boperation\s+ivy\b/i, 0.85],
   [/\bless\s+than\s+jake\b/i, 0.85],
@@ -55,6 +55,7 @@ const TIER2: [RegExp, number][] = [
   [/\bsave\s+ferris\b/i, 0.5],
   [/\bgoldfinger\b/i, 0.45],
   [/\bBad\s+Manners\b/, 0.45], // case-sensitive, mirrors subscription.ts
+  [/\brock-?steady\b/i, 0.5], // moved from TIER1: now context-gated at subscription level
 ]
 
 // Tier 3: genre-adjacent and instrumental signals

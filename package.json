@@ -10,9 +10,13 @@
     "publishFeed": "ts-node scripts/publishFeedGen.ts",
     "unpublishFeed": "ts-node scripts/unpublishFeedGen.ts",
     "crawlSceneGraph": "ts-node scripts/crawlSceneGraph.ts",
+    "syncSceneGraph": "bash scripts/sync-author-scores.sh",
     "inspectPost": "ts-node scripts/inspectPost.ts",
+    "previewFeed": "ts-node scripts/previewFeed.ts",
+    "analyzeExamples": "ts-node scripts/analyzeExamples.ts",
     "start": "ts-node src/index.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "test": "node --require ts-node/register --test tests/*.test.ts"
   },
   "dependencies": {
     "@atproto/api": "^0.13.28",

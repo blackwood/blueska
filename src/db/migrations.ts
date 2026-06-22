@@ -122,3 +122,29 @@ migrations['008'] = {
     await db.schema.alterTable('post').dropColumn('scoreVersion').execute()
   },
 }
+
+migrations['009'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('post')
+      .addColumn('inclusionReason', 'varchar', (col) =>
+        col.notNull().defaultTo('keyword'),
+      )
+      .execute()
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('post').dropColumn('inclusionReason').execute()
+  },
+}
+
+migrations['010'] = {
+  async up(db: Kysely<unknown>) {
+    await db.schema
+      .alterTable('author_score')
+      .addColumn('tier', 'varchar', (col) => col.notNull().defaultTo('full'))
+      .execute()
+  },
+  async down(db: Kysely<unknown>) {
+    await db.schema.alterTable('author_score').dropColumn('tier').execute()
+  },
+}

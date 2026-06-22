@@ -52,6 +52,13 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
   // lexiconScore: 0–1 exp curve, see src/util/lexiconScore.ts — re-ranker only
   const WEIGHTS = { author: 0.40, freshness: 0.30, engagement: 0.20, lexicon: 0.10 }
 
+  // Cap posts per author per page — prevents prolific accounts from flooding the feed.
+  // Metered accounts (daily bots, "of the day" feeds) get a tighter cap and a
+  // minimum like threshold so only their best posts surface.
+  const AUTHOR_POST_CAP = 3
+  const METERED_POST_CAP = 1
+  const METERED_LIKE_THRESHOLD = 1
+
   const scored = candidates.map((post) => {
     const ageMs = now.getTime() - new Date(post.indexedAt).getTime()
     const freshness = Math.exp(-ageMs / (48 * 60 * 60 * 1000))
@@ -63,15 +70,29 @@ export const handler = async (ctx: AppContext, params: QueryParams) => {
       WEIGHTS.freshness * freshness +
       WEIGHTS.engagement * engagement +
       WEIGHTS.lexicon * lexicon
-    return { post: post.uri, score }
+    return {
+      post: post.uri,
+      authorDid: post.authorDid,
+      score,
+      metered: post.inclusionReason === 'metered',
+      likeCount: post.likeCount,
+    }
   })
 
   scored.sort((a, b) => b.score - a.score)
 
   const startIdx = page * limit
-  const feed = scored.slice(startIdx, startIdx + limit).map(({ post }) => ({
-    post,
-  }))
+  const authorPostCount = new Map<string, number>()
+  const feed: { post: string }[] = []
+  for (const { post, authorDid, metered, likeCount } of scored.slice(startIdx)) {
+    if (metered && likeCount < METERED_LIKE_THRESHOLD) continue
+    const cap = metered ? METERED_POST_CAP : AUTHOR_POST_CAP
+    const count = authorPostCount.get(authorDid) ?? 0
+    if (count >= cap) continue
+    authorPostCount.set(authorDid, count + 1)
+    feed.push({ post })
+    if (feed.length >= limit) break
+  }
 
   const cursor = feed.length >= limit ? String(page + 1) : undefined
 

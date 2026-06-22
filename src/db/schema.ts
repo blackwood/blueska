@@ -13,6 +13,7 @@ export type Post = {
   likeCount: number
   lexiconScore: number
   scoreVersion: number
+  inclusionReason: string // 'keyword' | 'full' | 'posts_only' | 'metered'
 }
 
 export type SubState = {
@@ -28,5 +29,6 @@ export type Like = {
 export type AuthorScore = {
   did: string
   score: number
+  tier: string // 'full' | 'posts_only' | 'metered' | 'blocked'
   updatedAt: string
 }

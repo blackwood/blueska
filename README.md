@@ -1,154 +1,163 @@
-# ATProto Feed Generator
+# Blueska
 
-This is a starter kit for creating ATProto Feed Generators. It's not feature complete, but should give you a good starting ground off of which to build and deploy a feed.
+A Bluesky feed generator for ska music and related subgenres (ska-punk, rocksteady, 2-tone, reggae-adjacent). Live at **[blueska.fly.dev](https://blueska.fly.dev)**.
 
-## Overview
+Posts are indexed from the Bluesky firehose, filtered by keyword matching and scene graph proximity, and ranked by a composite score of freshness, engagement, author reputation, and lexical relevance.
 
-Feed Generators are services that provide custom algorithms to users through the AT Protocol.
+---
 
-They work very simply: the server receives a request from a user's server and returns a list of [post URIs](https://atproto.com/specs/at-uri-scheme) with some optional metadata attached. Those posts are then hydrated into full views by the requesting server and sent back to the client. This route is described in the [`app.bsky.feed.getFeedSkeleton` lexicon](https://docs.bsky.app/docs/api/app-bsky-feed-get-feed-skeleton).
+## Day-to-day workflows
 
-A Feed Generator service can host one or more algorithms. The service itself is identified by DID, while each algorithm that it hosts is declared by a record in the repo of the account that created it. For instance, feeds offered by Bluesky will likely be declared in `@bsky.app`'s repo. Therefore, a given algorithm is identified by the at-uri of the declaration record. This declaration record includes a pointer to the service's DID along with some profile information for the feed.
+### Check what's in the feed
 
-The general flow of providing a custom algorithm to a user is as follows:
-- A user requests a feed from their server (PDS) using the at-uri of the declared feed
-- The PDS resolves the at-uri and finds the DID doc of the Feed Generator
-- The PDS sends a `getFeedSkeleton` request to the service endpoint declared in the Feed Generator's DID doc
-  - This request is authenticated by a JWT signed by the user's repo signing key
-- The Feed Generator returns a skeleton of the feed to the user's PDS
-- The PDS hydrates the feed (user info, post contents, aggregates, etc.)
-  - In the future, the PDS will hydrate the feed with the help of an App View, but for now, the PDS handles hydration itself
-- The PDS returns the hydrated feed to the user
+Pull the production database and preview the current ranked feed with post text:
 
-For users, this should feel like visiting a page in the app. Once they subscribe to a custom algorithm, it will appear in their home interface as one of their available feeds.
-
-## Getting Started
-
-We've set up this simple server with SQLite to store and query data. Feel free to switch this out for whichever database you prefer.
-
-Next, you will need to do two things:
-
-1. Implement indexing logic in `src/subscription.ts`.
-
-   This will subscribe to the repo subscription stream on startup, parse events and index them according to your provided logic.
-
-2. Implement feed generation logic in `src/algos`
-
-   For inspiration, we've provided a very simple feed algorithm (`whats-alf`) that returns all posts related to the titular character of the TV show ALF.
-
-   You can either edit it or add another algorithm alongside it. The types are in place, and you will just need to return something that satisfies the `SkeletonFeedPost[]` type.
-
-We've taken care of setting this server up with a did:web. However, you're free to switch this out for did:plc if you like - you may want to if you expect this Feed Generator to be long-standing and possibly migrating domains.
-
-### Deploying your feed
-Your feed will need to be accessible at the value supplied to the `FEEDGEN_HOSTNAME` environment variable.
-
-The service must be set up to respond to HTTPS queries over port 443.
-
-### Publishing your feed
-
-To publish your feed, go to the script at `scripts/publishFeedGen.ts` and fill in the variables at the top. Examples are included, and some are optional. To publish your feed generator, simply run `yarn publishFeed`.
-
-To update your feed's display data (name, avatar, description, etc.), just update the relevant variables and re-run the script.
-
-After successfully running the script, you should be able to see your feed from within the app, as well as share it by embedding a link in a post (similar to a quote post).
-
-## Running the Server
-
-Install dependencies with `yarn` and then run the server with `yarn start`. This will start the server on port 3000, or what's defined in `.env`. You can then watch the firehose output in the console and access the output of the default custom ALF feed at [http://localhost:3000/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://did:example:alice/app.bsky.feed.generator/whats-alf](http://localhost:3000/xrpc/app.bsky.feed.getFeedSkeleton?feed=at://did:example:alice/app.bsky.feed.generator/whats-alf).
-
-Alternatively, run the server with Docker, e.g., `docker build -t feed-generator . && docker run feed-generator`.
-
-## Some Details
-
-### Skeleton Metadata
-
-The skeleton that a Feed Generator puts together is, in its simplest form, a list of post URIs.
-
-```ts
-[
-  {post: 'at://did:example:1234/app.bsky.feed.post/1'},
-  {post: 'at://did:example:1234/app.bsky.feed.post/2'},
-  {post: 'at://did:example:1234/app.bsky.feed.post/3'}
-]
+```bash
+fly sftp get /data/blueska.db /tmp/blueska-local.db
+FEEDGEN_SQLITE_LOCATION=/tmp/blueska-local.db yarn previewFeed --limit=20
 ```
 
-However, we include an additional location to attach some context. Here is the full schema:
+Each post shows its composite score broken down by component (`auth`, `fresh`, `eng`, `lex`) and how it got in (`[keyword]` or `[affinity]`). Add `--no-fetch` to skip the Bluesky API calls and show URIs only.
 
-```ts
-type SkeletonItem = {
-  post: string // post URI
+---
 
-  // optional reason for inclusion in the feed
-  // (generally to be displayed in client)
-  reason?: Reason
-}
+### Investigate a specific post
 
-// for now, the only defined reason is a repost, but this is open to extension
-type Reason = ReasonRepost
-
-type ReasonRepost = {
-  $type: 'app.bsky.feed.defs#skeletonReasonRepost'
-  repost: string // repost URI
-}
+```bash
+yarn inspectPost https://bsky.app/profile/<handle>/post/<rkey>
 ```
 
-This metadata serves two purposes:
+Prints the AT-URI, post text, and lexicon score. Use this to:
+- Check why a post scored high or low
+- Get the AT-URI to add to `data/examples.json`
+- Verify a false positive or false negative before changing gate rules
 
-1. To aid the PDS in hydrating all relevant post information
-2. To give a cue to the client in terms of context to display when rendering a post
+---
 
-### Authentication
+### Monitor for false negatives (ska posts we're missing)
 
-If you are creating a generic feed that does not differ for different users, you do not need to check auth. But if a user's state (such as follows or likes) is taken into account, we _strongly_ encourage you to validate their auth token.
+The server logs a 10% sample of rejected posts that had some ska-adjacent signal:
 
-Users are authenticated with a simple JWT signed by the user's repo signing key.
-
-This JWT header/payload takes the format:
-```ts
-const header = {
-  type: "JWT",
-  alg: "ES256K" // (key algorithm) - in this case secp256k1
-}
-const payload = {
-  iss: "did:example:alice", // (issuer) the requesting user's DID
-  aud: "did:example:feedGenerator", // (audience) the DID of the Feed Generator
-  exp: 1683643619 // (expiration) unix timestamp in seconds
-}
+```bash
+fly logs | grep '"nearMiss":true'
 ```
 
-We provide utilities for verifying user JWTs in the `@atproto/xrpc-server` package, and you can see them in action in `src/auth.ts`.
+Filter by rejection reason:
 
-### Pagination
-You'll notice that the `getFeedSkeleton` method returns a `cursor` in its response and takes a `cursor` param as input.
+```bash
+fly logs | grep 'ambiguous:no_context'    # band name matched but no music context words
+fly logs | grep 'exclude:ambiguous_band'  # our exclusion rules blocked something
+fly logs | grep 'reply:ska'               # reply posts that would have passed as root posts
+fly logs | grep 'ska:nordic'              # possibly Swedish posts we're filtering
+```
 
-This cursor is treated as an opaque value and fully at the Feed Generator's discretion. It is simply passed through the PDS directly to and from the client.
+Each log line contains a `uri` field. Pipe it into `inspectPost` or add it to `data/examples.json`.
 
-We strongly encourage that the cursor be _unique per feed item_ to prevent unexpected behavior in pagination.
+---
 
-We recommend, for instance, a compound cursor with a timestamp + a CID:
-`1683654690921::bafyreia3tbsfxe3cc75xrxyyn6qc42oupi73fxiox76prlyi5bpx7hr72u`
+### Label examples and measure classifier quality
 
-## Suggestions for Implementation
+**Add an example:**
 
-How a feed generator fulfills the `getFeedSkeleton` request is completely at their discretion. At the simplest end, a Feed Generator could supply a "feed" that only contains some hardcoded posts.
+1. Find a post via the feed, near-miss logs, or browsing Bluesky
+2. Run `yarn inspectPost <url>` to get the AT-URI
+3. Add it to `data/examples.json` under the right category:
+   - **positive:** `gig` (event post), `listener` (fan reaction), `promo` (band/label promotion), `media` (article/video), `humor` (ska-adjacent joke)
+   - **negative:** `swedish` (Nordic false positive), `crypto`, `geography`, `unrelated`
 
-For most use cases, we recommend subscribing to the firehose at `com.atproto.sync.subscribeRepos`. This websocket will send you every record that is published on the network. Since Feed Generators do not need to provide hydrated posts, you can index as much or as little of the firehose as necessary.
+**Analyze the labeled set:**
 
-Depending on your algorithm, you likely do not need to keep posts around for long. Unless your algorithm is intended to provide "posts you missed" or something similar, you can likely garbage collect any data that is older than 48 hours.
+```bash
+yarn analyzeExamples
+```
 
-Some examples:
+For each category: mean lexicon score, gate pass rate, and any misclassifications (positive posts that fail the gate = false negatives; negative posts that pass = false positives). The score separation between positive and negative means should stay above ~0.2. If it drops, the lexicon vocabulary needs tuning.
 
-### Reimplementing What's Hot
-To reimplement "What's Hot", you may subscribe to the firehose and filter for all posts and likes (ignoring profiles/reposts/follows/etc.). You would keep a running tally of likes per post and when a PDS requests a feed, you would send the most recent posts that pass some threshold of likes.
+---
 
-### A Community Feed
-You might create a feed for a given community by compiling a list of DIDs within that community and filtering the firehose for all posts from users within that list.
+### Update the scene graph
 
-### A Topical Feed
-To implement a topical feed, you might filter the algorithm for posts and pass the post text through some filtering mechanism (an LLM, a keyword matcher, etc.) that filters for the topic of your choice.
+The scene graph scores Bluesky accounts by how many seed accounts follow them. Seeds (labels, venues, ska bands, podcasts) get score 1.0. Their follows get a score proportional to how many seeds follow them.
 
-## Community Feed Generator Templates
+**Add a seed account:**
 
-- [Python](https://github.com/MarshalX/bluesky-feed-generator) - [@MarshalX](https://github.com/MarshalX)
-- [Ruby](https://github.com/mackuba/bluesky-feeds-rb) - [@mackuba](https://github.com/mackuba)
+1. Edit `SEED_HANDLES` in `scripts/crawlSceneGraph.ts`
+2. Run:
+
+```bash
+yarn syncSceneGraph
+```
+
+This crawls the graph, pushes the scores to the production database, and restarts the server. The feed's author weight (`0.40`) activates immediately.
+
+**Refresh scores without adding seeds** (monthly or after a big ska event):
+
+```bash
+yarn syncSceneGraph
+```
+
+---
+
+### Deploy a code change
+
+```bash
+fly deploy
+```
+
+The server binds HTTP before running migrations, so health checks pass during startup. The retention job waits 90 seconds before its first run, so a fresh deploy is confirmed healthy before any background SQLite work begins.
+
+After deploy, verify with:
+
+```bash
+curl https://blueska.fly.dev/health
+```
+
+Returns `{"status":"ok","firehoseLagSeconds":N,"dbSizeBytes":N}`. Status is `degraded` if the firehose hasn't sent an event in over 5 minutes.
+
+---
+
+## How the feed works
+
+### Inclusion gate (`src/subscription.ts`)
+
+Posts are indexed if they pass any of:
+
+1. **High-confidence keyword** — `ska-punk`, `#ska`, `skanking`, `Less Than Jake`, Skatalites, etc. No context required.
+2. **Ambiguous keyword + music context** — `Madness`, `Goldfinger`, `Rocksteady`, standalone `ska`, etc. must co-occur with a music context word (`band`, `gig`, `vinyl`, `horns`, etc.).
+3. **Author affinity** — author has `author_score ≥ 0.5` in the scene graph and the post isn't blocked by an exclusion.
+
+Reply posts only qualify via route 1 (high-confidence) or route 3 (affinity). The looser music-context gate doesn't apply to replies without their parent context.
+
+Hard exclusions block even high-confidence matches: Nordic `ska` grammar, crypto tokens, geographic names (Alaska, Nebraska), `Madness` as part of a compound proper noun (March Madness, Sound of Madness), Rocksteady Studios / Arkham games, TMNT's Bebop & Rocksteady.
+
+### Ranking formula (`src/algos/blueska.ts`)
+
+```
+score = 0.40 × authorScene + 0.30 × freshness + 0.20 × engagement + 0.10 × lexicon
+```
+
+- **authorScene** — `author_score` from the scene graph (0 for unknown accounts, 1.0 for seeds)
+- **freshness** — exponential decay over 48 hours
+- **engagement** — log-normalised like count
+- **lexicon** — term-matching score from `src/util/lexiconScore.ts`; rewards posts with stronger ska vocabulary
+
+Max 3 posts per author per feed page to prevent prolific accounts flooding.
+
+### Scene graph (`scripts/crawlSceneGraph.ts`)
+
+Seed accounts are manually curated ska labels, bands, venues, and community accounts. The crawl fetches each seed's follows and scores candidates by `(seeds_that_follow_them / total_seeds)`. Anyone followed by ≥5% of seeds gets a score. Run `yarn syncSceneGraph` to refresh.
+
+---
+
+## Scripts reference
+
+| Command | What it does |
+|---|---|
+| `yarn inspectPost <url>` | Fetch text + lexicon score for any post |
+| `yarn previewFeed` | Rank current DB and print top posts with score breakdown |
+| `yarn analyzeExamples` | Score labeled examples, report distributions and misclassifications |
+| `yarn crawlSceneGraph` | Crawl scene graph into local DB only |
+| `yarn syncSceneGraph` | Full prod sync: crawl → push to Fly → restart |
+| `yarn start` | Run server locally (dev) |
+| `yarn build` | Compile TypeScript |
+| `yarn publishFeed` | Publish or update feed metadata on Bluesky |

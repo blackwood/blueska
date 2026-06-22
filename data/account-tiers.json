@@ -1,0 +1,11 @@
+{
+  "_comment": "Controls how aggressively affinity-matched posts are indexed. All accounts not listed here default to 'full'. Edit and re-run yarn syncSceneGraph to apply.",
+  "tiers": {
+    "posts_only": [],
+    "metered": [
+      "bluebeatoftheday.bsky.social",
+      "jointil.bsky.social"
+    ],
+    "blocked": []
+  }
+}

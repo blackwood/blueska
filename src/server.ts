@@ -70,6 +70,7 @@ export class FeedGenerator {
     this.server = this.app.listen(this.cfg.port, this.cfg.listenhost)
     await events.once(this.server, 'listening')
     await migrateToLatest(this.db)
+    await this.firehose.loadAuthorAffinity()
     this.firehose.run(this.cfg.subscriptionReconnectDelay)
     this.startRetentionJob()
     return this.server
