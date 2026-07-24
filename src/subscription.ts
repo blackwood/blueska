@@ -204,8 +204,8 @@ const AMBIGUOUS_BAND_PATTERNS = [
   // ---- Pioneer Valley Ska Fest — TEMPORARY (remove after the weekend) ----
   // Lineup bands whose names are common phrases/proper nouns — music-context-gated
   // so they don't flood the feed. Still pass in any festival/gig/show post.
+  // (Pink Slip handled separately below — needs a ska indicator, not just music context.)
   /\b(the\s+)?Going\s+Rate\b/i, // idiom: "the going rate for..."
-  /\bPink\s+Slip\b/i,           // idiom: getting fired
   /\bThumper\b/i,               // Bambi character
   /\b(the\s+)?Selectmen\b/i,    // New England town government
   /\bHorizon\s+Point\b/i,       // generic place/company name
@@ -717,6 +717,13 @@ export function isMentionSpam(text: string): boolean {
   return noise / (noise + proseWords) >= MENTION_SPAM_RATIO
 }
 
+// ---- Pioneer Valley Ska Fest — TEMPORARY (remove after the weekend) ----
+// "Pink Slip" is also a fictional band in another genre, so generic music context
+// isn't enough. Require an explicit ska/festival indicator in the same post.
+const PINK_SLIP_RE = /\bPink\s+Slip\b/i
+const PVSF_SKA_INDICATOR_RE = /\bska\b|#pvsf\b|#pvska\b|#pvskafest\b|#pioneervalleyskafest\b/i
+// ---- end Pioneer Valley Ska Fest temporary block ----
+
 export function isSkaRelated(text: string): boolean {
   // Hard override: derogatory "skanks" co-occurring with "skanking" — checked
   // before HIGH_CONFIDENCE so it isn't bypassed by the skanking pattern.
@@ -764,6 +771,10 @@ export function isSkaRelated(text: string): boolean {
   const hasMusicCtx = MUSIC_CONTEXT.test(text) || ENGLISH_MUSIC_SIGNALS.test(text)
   if (BOND_STRONG_RE.test(text) && !hasMusicCtx) return false
   if (GOLDFINGER_RE.test(text) && GOLDFINGER_BOND_CTX_RE.test(text) && !hasMusicCtx) return false
+
+  // Pink Slip (PVSF lineup) — TEMPORARY: a same-name band in another genre exists,
+  // so require an explicit ska indicator rather than generic music context.
+  if (PINK_SLIP_RE.test(text) && PVSF_SKA_INDICATOR_RE.test(text)) return true
 
   // Ambiguous band names require strong music context (not just generic bridging words like
   // "listening" or "heard" which appear in non-music contexts like podcast posts or news).

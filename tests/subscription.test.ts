@@ -318,7 +318,10 @@ describe('PVSF: lineup bands (always pass, no music context)', () => {
 })
 
 describe('PVSF: common-word bands (music-context gated)', () => {
-  test('Pink Slip + show', () => pass('Pink Slip played a killer show'))
+  test('Pink Slip + ska indicator', () => pass('Pink Slip played a killer ska set'))
+  test('Pink Slip + #pvska', () => pass('Pink Slip up next #pvska'))
+  test('Pink Slip + music context but no ska indicator → blocked (same-name band, other genre)', () =>
+    fail('Pink Slip played a killer show'))
   test('pink slip idiom (no context) → blocked', () =>
     fail('got a pink slip at work today, been laid off'))
   test('The Going Rate + festival lineup', () => pass('The Going Rate on the festival lineup'))
