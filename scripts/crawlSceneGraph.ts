@@ -89,7 +89,7 @@ const SEED_HANDLES: string[] = [
   'theguiltyparties.bsky.social',   // The Guilty Parties — band
   'theironspiders.bsky.social',     // The Iron Spiders — band (members of 88 Fingers Louie, Common Rider, Rise Against)
   'did:plc:bqgzgq4cajanuvb7meptumoa', // The Pomps — band
-  'did:plc:xlc75axyggiiievk74cgbjvt', // Mega Infinity — band
+  'did:plc:xlc75axyggiiievk74cgbjvt', // Mega Infinity — band (gate_only: too much non-ska; see account-tiers.json)
   'skaaapunk.bsky.social',          // Against All Authority — band
   'themizzinator.bsky.social',      // Joe Mizzi — musician (The Bollweevils, The Iron Spiders, Common Rider)
   'leethompson.bsky.social',        // Lee Thompson — saxophone, Madness
