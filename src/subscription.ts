@@ -160,8 +160,8 @@ const HIGH_CONFIDENCE_PATTERNS = [
   /#pvskafest\b/i,
   /\bpioneer\s+valley\s+ska\s+fest(ival)?\b/i,
   /\bwestern\s+mass(achusetts)?\s+ska\b/i,
-  /\b413\s?ska\b/i,
-  /\b52\s+sumner\s+st(reet)?\b/i, // festival venue address, Springfield MA
+  /\b413\s?ska\b/i, // "413 ska", "413ska", "#413ska"
+  /\b52\s*sumner\b/i, // festival venue: "52 Sumner St", "52 Sumner", "#52Sumner"
   /\bSgt\.?\s+Scag\b/i,
   /\bGirth\s+Control\b/i,
   /\bcode\s?name:?\s+rocky\b/i,

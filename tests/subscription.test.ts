@@ -299,7 +299,10 @@ describe('PVSF: hashtags, name, venue (always pass)', () => {
   test('Pioneer Valley Ska Festival', () => pass('heading to the Pioneer Valley Ska Festival'))
   test('Western Mass Ska', () => pass('the Western Mass Ska scene is thriving'))
   test('413 ska', () => pass('413 ska represent'))
-  test('venue address', () => pass('doors open at 52 Sumner St, Springfield MA'))
+  test('#413ska hashtag', () => pass('see you all at #413ska this weekend'))
+  test('venue: 52 Sumner St', () => pass('doors open at 52 Sumner St, Springfield MA'))
+  test('venue: 52 Sumner (no St)', () => pass('the show is at 52 Sumner tonight'))
+  test('venue: #52Sumner hashtag', () => pass('#52Sumner doors at 7pm'))
 })
 
 describe('PVSF: lineup bands (always pass, no music context)', () => {
