@@ -18,6 +18,9 @@ yarn unpublishFeed      # Unpublish a feed
 yarn inspectPost <url>  # Fetch post text + lexicon score for a bsky.app URL or AT-URI
 yarn previewFeed        # Rank current DB contents and print top N posts with score breakdown
 yarn analyzeExamples    # Score all labeled URIs in data/examples.json; report misclassifications
+yarn checkHealth        # Smoke-test prod (HTTP checks + optional DB checks); exit 1 on failures
+                        # --local: target localhost instead of prod hostname
+                        # DB checks run automatically if FEEDGEN_SQLITE_LOCATION is a real file
 
 # Scene graph
 yarn crawlSceneGraph    # Crawl seed follows, write author_score to local DB
@@ -101,15 +104,15 @@ yarn build && yarn test
 fly deploy
 
 # 3. Verify the new deploy is healthy before touching data
-curl https://blueska.fly.dev/health
-fly logs | tail -20
+yarn checkHealth
 
 # 4. Sync scene graph (crawl locally → push SQL → restart machine)
 #    Run after any change to SEED_HANDLES, data/account-tiers.json, or monthly
 yarn syncSceneGraph
 
-# 5. Confirm affinity scores loaded
-fly logs | grep 'author affinity'
+# 5. Confirm affinity scores loaded + full smoke test with DB
+fly sftp get /data/blueska.db /tmp/blueska-local.db
+FEEDGEN_SQLITE_LOCATION=/tmp/blueska-local.db yarn checkHealth
 ```
 
 **Ordering constraint:** `fly deploy` must run before `yarn syncSceneGraph`. The sync script INSERTs with the `tier` column; if a migration that adds that column hasn't run yet on prod, the INSERT fails. Migrations run automatically at startup during `fly deploy`.
@@ -120,14 +123,15 @@ fly logs | grep 'author affinity'
 
 **Check feed health:**
 ```bash
-curl https://blueska.fly.dev/health
-fly logs | grep '"nearMiss":true'   # sample of rejected near-misses
+yarn checkHealth                                        # HTTP checks only
+fly logs | grep '"nearMiss":true'                       # sample of rejected near-misses
 ```
 
-**Pull prod DB for local preview:**
+**Pull prod DB for deep inspection:**
 ```bash
 fly sftp get /data/blueska.db /tmp/blueska-local.db
-FEEDGEN_SQLITE_LOCATION=/tmp/blueska-local.db yarn previewFeed
+FEEDGEN_SQLITE_LOCATION=/tmp/blueska-local.db yarn checkHealth   # HTTP + DB checks
+FEEDGEN_SQLITE_LOCATION=/tmp/blueska-local.db yarn previewFeed   # ranked feed preview
 ```
 
 ## SQLite / Event-Loop Constraint
@@ -147,27 +151,38 @@ Filtering in `src/subscription.ts` uses three tiers:
 
 **High-confidence** (always match, no context needed):
 - Compound terms: `ska-punk`, `ska-core`, `third wave ska`, `skanking`
-- Hashtag: `#ska`
-- Ska gig/event phrases: `ska show`, `ska gig`, `ska concert`, etc.
+- Hashtags: `#ska`, `#blueska`
+- Ska event/form compounds: `ska show`, `ska gig`, `ska concert`, `ska cover`, `ska version`, `ska remix`, etc.
 - Unambiguous artists: Skatalites, Operation Ivy, Less Than Jake, Streetlight Manifesto, Reel Big Fish, Mighty Mighty Bosstones, Toots & the Maytals, Desmond Dekker
 - Ska identity terms: `rudeboy`, `rudegirl`, `2-tone ska`
 
 **Ambiguous — require music context** (`band`, `gig`, `vinyl`, `horns`, `upstroke`, etc.):
 - `ska` standalone (also filtered for Nordic grammar patterns)
 - `two-tone` / `rude boy/girl` standalone
-- Band names that are common words: The Specials, Selecter, Madness, Save Ferris, Goldfinger, Bad Manners, Rocksteady
+- Band names that are common words: The Specials, Selecter, Madness, Save Ferris, Goldfinger, Bad Manners, Rocksteady (hyphenated/closed only — "rock steady" space form excluded)
 
 **Reply gate:** Reply posts (have a `reply` field) only pass if they match a HIGH_CONFIDENCE pattern. The looser standalone-ska + music-context gate does not apply to replies.
 
-**Exclusions** (checked before ambiguous tests):
-- Nordic `ska` (Swedish/Norwegian auxiliary verb): detected via subject pronouns + verb infinitives
-- `polska`, `$ska`, crypto token patterns, geographic names (alaska, nebraska, itasca)
-- Madness as part of a compound proper noun: `[Capital] (of/the)? Madness` or `Madness (of/the){1-2} [Capital]` — catches March Madness, Sound of Madness, Midnight Madness, etc., while passing standalone "Madness" (the band)
-- Rocksteady Studios / Batman Arkham games: `\barkham\b`, `\bRocksteady Studios\b`
-- TMNT characters: `bebop.*rocksteady` or `rocksteady.*bebop`
-- Derogatory skanks+skanking co-occurrence
+**Structural spam gate:** `isMentionSpam()` fires before all semantic checks. Posts with ≥3 @mentions where mentions+hashtags are ≥60% of all tokens are dropped.
 
-**Author affinity gate:** Posts from authors with `author_score ≥ 0.5` are indexed regardless of keyword matching (still blocked by exclusions). Tracked as `inclusionReason = 'affinity'`.
+**Exclusions** (checked before ambiguous tests):
+- Nordic `ska` (Swedish/Norwegian auxiliary verb): subject pronouns + verb infinitives + directional particles (`ska fram`, `ska dit`, `ska hem`, etc.)
+- Slavic feminine surnames (`Jasińska` etc.): non-ASCII consonants create false `\b` before "ska"; caught by Unicode lookbehind `/(?<=\p{L})\bska\b/u`
+- `polska`, `$ska`, crypto token patterns, geographic names (alaska, nebraska, itasca)
+- Madness: structural classifier (`classifyMadness()`) scores by flanking capitalized proper nouns — passes standalone "Madness" (the band), rejects "March Madness", "Sound of Madness", "Midnight Madness", etc.
+- Bond film context: `james bond` / `bond film` / `bond movie` without music context; Goldfinger + bond-specific terms (007, villain, etc.) without music context
+- Rocksteady Studios / Batman Arkham games: `\barkham\b`, `\bRocksteady Studios\b`
+- TMNT characters: `bebop` + `rocksteady`/`rock-steady`/`rock steady` in either order
+- Derogatory skanks+skanking co-occurrence (checked before HIGH_CONFIDENCE so it isn't bypassed)
+
+**Author affinity gate:** Posts from authors with `author_score ≥ 0.5` bypass the keyword gate (exclusions still apply). `inclusionReason` stores the tier: `full`, `posts_only`, or `metered`. See account tiers below.
+
+**Account tiers** (`data/account-tiers.json`, applied by `yarn syncSceneGraph`):
+- `full` — root posts + replies indexed (default for all seeds)
+- `gate_only` — scored for ranking but always goes through the keyword gate; use for scene-adjacent accounts with mixed/noisy content (e.g. music journalists who also post film reviews)
+- `posts_only` — root posts bypass gate; replies still need keyword gate
+- `metered` — root posts only; feed algorithm applies 1-per-page cap + like threshold
+- `blocked` — hard-excluded before any gate logic; add handles here for slop/spam accounts
 
 **Near-miss logging:** 10% of rejected posts that had some ska-adjacent signal are logged as JSON to stdout with a `reason` tag (`ambiguous:no_context`, `ska:nordic`, `exclude:ambiguous_band`, `reply:ska`, etc.). Query: `fly logs | grep '"nearMiss":true'`.
 
@@ -180,7 +195,7 @@ Composite score: `0.40 × authorScene + 0.30 × freshness + 0.20 × engagement +
 - **engagement**: `min(1, log1p(likeCount) / log(10))` — log-normalised like count
 - **lexicon**: `computeLexiconScore(text)` — exp-curve weighted term match, see `src/util/lexiconScore.ts`
 
-Per-author cap: max 3 posts per author per feed page to prevent prolific accounts flooding the feed.
+Per-author cap: max 3 posts per page (default). `metered` accounts are capped at 1 per page and require `likeCount ≥ 1` to surface at all.
 
 Cursor encodes page number (0-indexed) for stable pagination.
 
@@ -204,6 +219,10 @@ Scores Bluesky accounts by social proximity to known ska scene seeds:
 Results written to `author_score` table. Server loads them into memory via `loadAuthorAffinity()` on startup. Re-run whenever seeds change or monthly to keep scores fresh.
 
 **Add a seed:** Edit `SEED_HANDLES` in `scripts/crawlSceneGraph.ts`, then run `yarn syncSceneGraph`.
+
+**Add a blocked account:** Add the handle to `data/account-tiers.json` under `"blocked"`, then run `yarn syncSceneGraph` (no deploy needed — machine restart reloads the in-memory map).
+
+**Current scale (2026-06-22):** 39 seeds, 704 author scores written to prod.
 
 ## Feed Quality Workflow
 

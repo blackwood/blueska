@@ -92,12 +92,12 @@ async function main() {
     console.log('done')
   }
 
-  const affinityCount = top.filter(
-    (t) => (t.post.inclusionReason ?? 'keyword') === 'affinity',
+  const sceneCount = top.filter(
+    (t) => (t.post.inclusionReason ?? 'keyword') !== 'keyword',
   ).length
   const knownAuthors = top.filter((t) => t.authorScene > 0).length
   console.log(
-    `\nTop ${top.length} of ${candidates.length} candidates — ${affinityCount} affinity, ${top.length - affinityCount} keyword — ${knownAuthors} from known scene accounts`,
+    `\nTop ${top.length} of ${candidates.length} candidates — ${sceneCount} scene graph, ${top.length - sceneCount} keyword — ${knownAuthors} from known scene accounts`,
   )
   console.log(
     `Author scores: ${authorScoreMap.size} loaded (0 = run yarn crawlSceneGraph first)\n`,
@@ -109,7 +109,7 @@ async function main() {
     const ageH = Math.round(
       (now.getTime() - new Date(post.indexedAt).getTime()) / 3_600_000,
     )
-    const tag = reason === 'affinity' ? '[affinity]' : '[keyword]'
+    const tag = reason !== 'keyword' ? `[${reason}]` : '[keyword]'
 
     console.log(
       `#${String(i + 1).padStart(2)}  ${score.toFixed(3)}  ${tag}  ${ageH}h ago  ❤ ${post.likeCount}`,

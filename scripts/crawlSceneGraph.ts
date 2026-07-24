@@ -33,7 +33,7 @@ dotenv.config()
 //   metered    — root posts only, 1-per-page cap, like threshold in algo
 //   blocked    — totally excluded: no posts indexed regardless of keywords
 const TIERS_PATH = path.join(__dirname, '../data/account-tiers.json')
-type TiersConfig = { tiers: { posts_only?: string[]; metered?: string[]; blocked?: string[] } }
+type TiersConfig = { tiers: { gate_only?: string[]; posts_only?: string[]; metered?: string[]; blocked?: string[] } }
 const tiersConfig: TiersConfig = fs.existsSync(TIERS_PATH)
   ? (JSON.parse(fs.readFileSync(TIERS_PATH, 'utf8')) as TiersConfig)
   : { tiers: {} }
@@ -53,6 +53,7 @@ const SEED_HANDLES: string[] = [
   'badtimerecords.bsky.social',
   'jumpuprecords.bsky.social',
   'asianmanrecords.bsky.social',
+  'piratespressrecs.bsky.social',   // Pirates Press Records — label
   'catbiteband.bsky.social',
   'skatunenetwork.bsky.social',
   'trojanrecords.bsky.social',
@@ -84,11 +85,36 @@ const SEED_HANDLES: string[] = [
   // Bands
   'dancehallcrashers.bsky.social',
   'steppinrazorblades.bsky.social', // New England Ska Punk
+  'theskapones.bsky.social',        // The Skapones — North East England ska band
+  'theguiltyparties.bsky.social',   // The Guilty Parties — band
+  'theironspiders.bsky.social',     // The Iron Spiders — band (members of 88 Fingers Louie, Common Rider, Rise Against)
+  'did:plc:bqgzgq4cajanuvb7meptumoa', // The Pomps — band
+  'did:plc:xlc75axyggiiievk74cgbjvt', // Mega Infinity — band
+  'skaaapunk.bsky.social',          // Against All Authority — band
+  'themizzinator.bsky.social',      // Joe Mizzi — musician (The Bollweevils, The Iron Spiders, Common Rider)
+  'leethompson.bsky.social',        // Lee Thompson — saxophone, Madness
   'pwrup.bsky.social',              // Western Mass Skacore
+  'girthcontrol69.bsky.social',
+  'gruberites.bsky.social',
+  'buckonine.bsky.social',            // Buck-O-Nine — third wave ska
+  'fiveironfrenzy.bsky.social',       // Five Iron Frenzy — ska/pop punk
+  'mustardplug.bsky.social',          // Mustard Plug — third wave ska
+  'suicidemachines.bsky.social',      // The Suicide Machines — ska-punk/hardcore
+  'fishboneband.bsky.social',         // Fishbone — funk/ska/punk
+  'randomhand.co.uk',                 // Random Hand — ska-punk (UK)
 
   // Individual artists / scene members
   'reade.bsky.social',              // Reade of We Are the Union
   '2oh3.bsky.social',              // Cody Freedom — saxophone, show promoter, 2025 ska releases playlist
+  'skazzini.bsky.social',           // scene musician
+  'thebubbamaster.bsky.social',     // scene musician
+  'slpancakes.bsky.social',         // MN ska band
+  '4yeo-saxo.bsky.social',          // scene musician — saxophone, The Toasters
+  'davidhillyard.bsky.social',      // David Hillyard — saxophone, The Slackers
+  'chrisgraue.com',                 // scene musician
+  'reelbigdan.bsky.social',         // scene musician
+  'rhodadakar.bsky.social',         // Rhoda Dakar — The Bodysnatchers, The Specials
+  'markbedford.bsky.social',        // Mark Bedford — bass, Madness
 
   // Promoters / venues / regional scenes
   '413ska.bsky.social',            // Western Mass Ska & Punk Shows
@@ -96,7 +122,13 @@ const SEED_HANDLES: string[] = [
 
   // Media / press
   'skagazine.bsky.social',         // SKAgazine — zine + podcast
-  'readjunk.bsky.social',          // ReadJunk.com (profile gated — may fail to resolve)
+  'did:plc:6nlmo67eeaeb74avh5yluo55', // ska radio show
+  'buttondownradio.bsky.social',    // ska radio show
+  'dothedogmusic.bsky.social',     // Do the Dog — ska/punk/reggae magazine
+  'did:plc:6mfyhc35yombvwdkjvopqs2o', // Enjoy Yourself — internet show about ska
+  'bounce-house-ska.bsky.social',  // Bounce House Ska — band
+  // readjunk.bsky.social removed from seeds — mixed content (music + film/politics)
+  // They'll still be scored by the crawl; if ≥5% of seeds follow them they get affinity.
 
   // Add your verified handles above this line.
 ]
@@ -172,10 +204,12 @@ async function main() {
   }
 
   // Resolve tier overrides to DIDs so we can apply them when writing scores
+  const gateOnlyDids = new Set<string>()
   const postsOnlyDids = new Set<string>()
   const meteredDids = new Set<string>()
   const blockedDids = new Set<string>()
   const tierEntries: [string, string[]][] = [
+    ['gate_only',  tiersConfig.tiers.gate_only  ?? []],
     ['posts_only', tiersConfig.tiers.posts_only ?? []],
     ['metered',    tiersConfig.tiers.metered    ?? []],
     ['blocked',    tiersConfig.tiers.blocked    ?? []],
@@ -189,7 +223,8 @@ async function main() {
         if (did) {
           if (tierName === 'blocked') blockedDids.add(did)
           else if (tierName === 'metered') meteredDids.add(did)
-          else postsOnlyDids.add(did)
+          else if (tierName === 'posts_only') postsOnlyDids.add(did)
+          else if (tierName === 'gate_only') gateOnlyDids.add(did)
           console.log(`  ${tierName}: ${handle} → ${did}`)
         }
       }
@@ -222,8 +257,9 @@ async function main() {
   const upserts: { did: string; score: number; tier: string; updatedAt: string }[] = []
 
   const tierFor = (did: string) =>
-    blockedDids.has(did) ? 'blocked'
-    : meteredDids.has(did) ? 'metered'
+    blockedDids.has(did)  ? 'blocked'
+    : gateOnlyDids.has(did)  ? 'gate_only'
+    : meteredDids.has(did)   ? 'metered'
     : postsOnlyDids.has(did) ? 'posts_only'
     : 'full'
 
@@ -242,11 +278,21 @@ async function main() {
     }
   }
 
-  // Blocked accounts must be in the DB even if no seeds follow them —
-  // the server checks tier at event time to hard-exclude their posts.
+  // Blocked and gate_only accounts must be force-written even if below the score
+  // threshold or not followed by any seeds. Without this, a stale row from a
+  // previous crawl (e.g. readjunk at score=1.0/full when they were a seed) would
+  // survive and the tier override would never take effect.
   for (const did of blockedDids) {
     if (!upserts.some((u) => u.did === did)) {
       upserts.push({ did, score: 0, tier: 'blocked', updatedAt: now })
+    }
+  }
+  for (const did of gateOnlyDids) {
+    if (!upserts.some((u) => u.did === did)) {
+      // Use their actual crawled score if they were followed by seeds; otherwise 0.
+      const crawledScore = connectionCount.get(did)
+      const score = crawledScore !== undefined ? crawledScore / seedDids.length : 0
+      upserts.push({ did, score, tier: 'gate_only', updatedAt: now })
     }
   }
 
